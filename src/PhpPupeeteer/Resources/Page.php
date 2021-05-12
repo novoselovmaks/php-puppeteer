@@ -239,8 +239,10 @@ class Page extends Buffer
 				case 'regex':
 					$regex = implode('|', array_map(function($rule){
 						//$rule = preg_quote($rule, '/');
-						return "new RegExp(/{$rule}/, 'g')";
+						//return "new RegExp(/{$rule}/, 'g')";
+						return $rule;
 					}, $rules));
+					$regex = "new RegExp(/({$rules})/, 'g')";
 					$consts[] = "blockedRegex = [{$regex}]";
 					$codes[] = "request.url().match(blockedRegex)";
 					break;
