@@ -84,6 +84,7 @@ class Page extends Buffer
 	;
 
 	protected $blockedRequests = [];
+	protected $enableRequests = [];
 
 	/** @var bool */
 	protected $initBlockRequest = false;
@@ -120,7 +121,9 @@ class Page extends Buffer
 
 	public function enableRequestsByRegex(array $regex): self
 	{
-		return $this->removeBlockingRule('regex', $regex);
+		$this->removeBlockingRule('regex', $regex);
+		
+		return $this->addEnableRule('regex', $regex);
 	}
 
 	public function disableRequestsByRegex(array $regex): self
@@ -128,10 +131,12 @@ class Page extends Buffer
 		return $this->addBlockingRule('regex', $regex);
 	}
 
+/*
 	public function enableRequests(string $type, array $rules): self
 	{
 		return $this->addBlockingRule($type, $rules);
 	}
+	*/
 
 	public function authenticate(string $username, string $password)
 	{
@@ -144,6 +149,7 @@ class Page extends Buffer
 	public function goto(string $url, array $options = []): ?Response
 	{
 		if (!$this->initBlockRequest) {
+			$this->enableRequestsByRegex([preg_quote($url, '/')]);
 			$this->setBlockedRequests();
 		}
 		return parent::goto($url, $options);
@@ -208,54 +214,87 @@ class Page extends Buffer
 		if ($this->initBlockRequest) {
 			throw new InternalError('Request is already handled!');
 		}
-
-		$consts = [];
-		$codes = [];
-		foreach ($this->blockedRequests as $type => $rules) {
-			switch ($type) {
-				case 'type':
-					$rules = implode(', ', array_map(function($rule){
-						return "'{$rule}'";
-					}, $rules));
-					$consts[] = "blockedTypes = [{$rules}]";
-					$codes[] = "blockedTypes.indexOf(request.resourceType()) !== -1";
+	
+		$dataConsts = [];
+		$dataCodes = [];
+		
+		$dataRules = [
+			'blocked' => $this->blockedRequests,
+			'enable' => $this->enableRequests,
+		];
+		
+		foreach($dataRules as $dataKey => $data)
+		{
+			$consts = [];
+			$codes = [];
+			foreach ($data as $type => $rules) {
+				
+				if(empty($rules))
 					break;
-				case 'domain':
-					$rules = implode('|', array_map(function($rule){
-						return preg_quote($rule, '/');
-					}, $rules));
-					$regex = "new RegExp(/^(?:http(?:s)?:)?\/\/.*?({$rules})(\/|$)/, 'g')";
-					$consts[] = "blockedDomains = {$regex}";
-					$codes[] = "request.url().match(blockedDomains)";
-					break;
-				case 'url':
-					$rules = implode('|', array_map(function($rule){
-						return preg_quote($rule, '/');
-					}, $rules));
-					$regex = "new RegExp(/^({$rules})(\/|$)/, 'g')";
-					$consts[] = "blockedUrls = {$regex}";
-					$codes[] = "request.url().match(blockedUrls)";
-					break;
-				case 'regex':
-					$rules = implode('|', array_map(function($rule){
-						//$rule = preg_quote($rule, '/');
-						//return "new RegExp(/{$rule}/, 'g')";
-						return $rule;
-					}, $rules));
-					$regex = "new RegExp(/({$rules})/, 'g')";
-					$consts[] = "blockedRegex = [{$regex}]";
-					$codes[] = "request.url().match(blockedRegex)";
-					break;
+				
+				switch ($type) {
+					case 'type':
+						$rules = implode(', ', array_map(function($rule){
+							return "'{$rule}'";
+						}, $rules));
+						$consts[] = "{$dataKey}Types = [{$rules}]";
+						$codes[] = "{$dataKey}Types.indexOf(request.resourceType()) !== -1";
+						break;
+					case 'domain':
+						$rules = implode('|', array_map(function($rule){
+							return preg_quote($rule, '/');
+						}, $rules));
+						$regex = "new RegExp(/^(?:http(?:s)?:)?\/\/.*?({$rules})(\/|$)/, 'g')";
+						$consts[] = "{$dataKey}Domains = {$regex}";
+						$codes[] = "request.url().match({$dataKey}Domains)";
+						break;
+					case 'url':
+						$rules = implode('|', array_map(function($rule){
+							return preg_quote($rule, '/');
+						}, $rules));
+						$regex = "new RegExp(/^({$rules})(\/|$)/, 'g')";
+						$consts[] = "{$dataKey}Urls = {$regex}";
+						$codes[] = "request.url().match({$dataKey}Urls)";
+						break;
+					case 'regex':
+						$rules = implode('|', $rules);
+						$regex = "new RegExp(/({$rules})/, 'g')";
+						$consts[] = "{$dataKey}Regex = {$regex}";
+						$codes[] = "request.url().match({$dataKey}Regex)";
+						break;
+				}
 			}
+		
+			$dataConsts[$dataKey] = $consts;
+			$dataCodes[$dataKey] = $codes;
 		}
+		
 
-		if (count($consts) > 0 && count($codes) > 0) {
+		if ((isset($dataConsts['blocked']) && count($dataConsts['blocked']) > 0) && 
+			(isset($dataCodes['blocked']) && count($dataCodes['blocked']) > 0)) {
+			
+			
 			$this->initBlockRequest = true;
 			$this->setRequestInterception(true);
 
-			try {
-				$consts = implode(", ", $consts);
-				$codes = implode(" || ", $codes);
+
+			try { 
+				
+				$consts = implode(", ", $dataConsts['blocked']);
+				$codes = implode(" || ", $dataCodes['blocked']);
+				
+				
+				if ((isset($dataConsts['enable']) && count($dataConsts['enable']) > 0) && 
+					(isset($dataCodes['enable']) && count($dataCodes['enable']) > 0)) {
+			
+			
+						$consts .= ',' . implode(", ", $dataConsts['enable']);
+						 
+						$codesEnableRequests = implode(" || ", $dataCodes['enable']);
+						$codes = "({$codes}) && !({$codesEnableRequests})";
+					}
+				
+
 				$pageFunction = Js::createWithParameters(['request'])
 					->body("
 						const {$consts};
@@ -283,9 +322,19 @@ class Page extends Buffer
 		$this->blockedRequests[$type] = array_keys(array_flip($rules));
 		return $this;
 	}
+	
+	protected function addEnableRule(string $type, $rules): self
+	{
+		if (!is_array($rules)) {
+			$rules = [$rules];
+		}
+		$rules = array_merge($this->enableRequests[$type] ?? [], $rules);
+		$this->enableRequests[$type] = array_keys(array_flip($rules));
+		return $this;
+	}
 
 	protected function removeBlockingRule(string $type, $rules): self
-	{
+	{	
 		if (array_key_exists($type, $this->blockedRequests)) {
 			if (!is_array($rules)) {
 				$rules = [$rules];
@@ -297,7 +346,12 @@ class Page extends Buffer
 				}
 			}
 			$this->blockedRequests[$type] = array_keys($array);
+			
+			if(empty($this->blockedRequests[$type]))
+				unset($this->blockedRequests[$type]);
+			
 		}
+		
 		return $this;
 	}
 
