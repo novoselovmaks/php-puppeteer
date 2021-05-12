@@ -238,8 +238,8 @@ class Page extends Buffer
 					break;
 				case 'regex':
 					$regex = implode('|', array_map(function($rule){
-						$rule = preg_quote($rule, '/');
-						return "new RegExp(/^($rule)(\/|$)/, 'g')";
+						//$rule = preg_quote($rule, '/');
+						return "new RegExp(/{$rule}/, 'g')";
 					}, $rules));
 					$consts[] = "blockedRegex = [{$regex}]";
 					$codes[] = "request.url().match(blockedRegex)";
