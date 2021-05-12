@@ -237,7 +237,7 @@ class Page extends Buffer
 					$codes[] = "request.url().match(blockedUrls)";
 					break;
 				case 'regex':
-					$regex = implode('|', array_map(function($rule){
+					$rules = implode('|', array_map(function($rule){
 						//$rule = preg_quote($rule, '/');
 						//return "new RegExp(/{$rule}/, 'g')";
 						return $rule;
